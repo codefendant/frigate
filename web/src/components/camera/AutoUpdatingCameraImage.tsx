@@ -9,6 +9,7 @@ type AutoUpdatingCameraImageProps = {
   cameraClasses?: string;
   reloadInterval?: number;
   periodicCache?: boolean;
+  showWhenDisabled?: boolean;
 };
 
 const MIN_LOAD_TIMEOUT_MS = 200;
@@ -21,17 +22,18 @@ export default function AutoUpdatingCameraImage({
   cameraClasses,
   reloadInterval = MIN_LOAD_TIMEOUT_MS,
   periodicCache = false,
+  showWhenDisabled = false,
 }: AutoUpdatingCameraImageProps) {
   const [key, setKey] = useState(Date.now());
   const [fps, setFps] = useState<string>("0");
   const timeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
+    setKey(Date.now());
+
     if (reloadInterval == -1) {
       return;
     }
-
-    setKey(Date.now());
 
     return () => {
       if (timeoutRef.current) {
@@ -94,6 +96,7 @@ export default function AutoUpdatingCameraImage({
         onload={handleLoad}
         searchParams={cacheKey}
         className={cameraClasses}
+        showWhenDisabled={showWhenDisabled}
       />
       {showFps ? <span className="text-xs">Displaying at {fps}fps</span> : null}
     </div>
