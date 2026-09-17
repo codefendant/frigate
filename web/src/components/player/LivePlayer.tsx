@@ -117,6 +117,9 @@ export default function LivePlayer({
     offline,
   } = useCameraActivity(cameraConfig);
 
+  const showLastFrameWhenOff =
+    cameraConfig.live?.show_last_frame_when_off ?? false;
+
   const cameraActive = useMemo(
     () =>
       !showStillWithoutActivity ||
@@ -160,7 +163,12 @@ export default function LivePlayer({
   // camera still state
 
   const stillReloadInterval = useMemo(() => {
-    if (!windowVisible || offline || !showStillWithoutActivity) {
+    if (
+      !windowVisible ||
+      offline ||
+      !showStillWithoutActivity ||
+      (!cameraEnabled && showLastFrameWhenOff)
+    ) {
       return -1; // no reason to update the image when the window is not visible
     }
 
@@ -190,6 +198,8 @@ export default function LivePlayer({
     offline,
     windowVisible,
     cameraActive,
+    cameraEnabled,
+    showLastFrameWhenOff,
   ]);
 
   useEffect(() => {
@@ -430,7 +440,7 @@ export default function LivePlayer({
           showStillWithoutActivity &&
             !liveReady &&
             !isReEnabling &&
-            cameraEnabled
+            (cameraEnabled || showLastFrameWhenOff)
             ? "visible"
             : "invisible",
         )}
@@ -442,6 +452,7 @@ export default function LivePlayer({
           showFps={false}
           reloadInterval={stillReloadInterval}
           periodicCache
+          showWhenDisabled={showLastFrameWhenOff}
         />
       </div>
 
@@ -490,7 +501,7 @@ export default function LivePlayer({
         </div>
       )}
 
-      {!cameraEnabled && (
+      {!cameraEnabled && !showLastFrameWhenOff && (
         <div className="relative flex h-full w-full items-center justify-center rounded-2xl border border-secondary-foreground bg-background_alt">
           <div className="flex h-32 flex-col items-center justify-center rounded-lg p-4 md:h-48 md:w-48">
             <LuVideoOff className="mb-2 size-8 md:size-10" />
@@ -498,6 +509,15 @@ export default function LivePlayer({
               {t("cameraOff")}
             </p>
           </div>
+        </div>
+      )}
+
+      {!cameraEnabled && showLastFrameWhenOff && (
+        <div className="absolute bottom-2 left-2 z-40">
+          <Chip className="flex items-center gap-1 bg-background/70 text-xs">
+            <LuVideoOff className="size-3" />
+            {t("cameraOff")}
+          </Chip>
         </div>
       )}
 

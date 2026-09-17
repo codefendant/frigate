@@ -109,6 +109,7 @@ export interface CameraConfig {
     height: number;
     quality: number;
     streams: { [key: string]: string };
+    show_last_frame_when_off: boolean;
   };
   lpr: {
     enabled: boolean;
