@@ -26,5 +26,5 @@ class CameraLiveConfig(FrigateBaseModel):
     show_last_frame_when_off: bool = Field(
         default=False,
         title="Show last frame when off",
-        description="Show the most recent available camera frame in Live view while the camera is intentionally turned off.",
+        description="Show the most recent available camera frame in Live view while the camera is intentionally turned off, without restarting the live stream.",
     )
