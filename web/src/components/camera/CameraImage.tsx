@@ -32,7 +32,6 @@ export default function CameraImage({
   const { name } = cameraConfig ?? { name: camera };
   const { payload: enabledState } = useEnabledState(camera);
   const enabled = enabledState ? enabledState === "ON" : true;
-  const shouldRenderImage = enabled || showWhenDisabled;
 
   const [{ width: containerWidth, height: containerHeight }] =
     useResizeObserver(containerRef);
@@ -86,7 +85,7 @@ export default function CameraImage({
 
   return (
     <div className={className} ref={containerRef}>
-      {shouldRenderImage ? (
+      {enabled || showWhenDisabled ? (
         <img
           ref={imgRef}
           className={cn(
@@ -104,7 +103,7 @@ export default function CameraImage({
       ) : (
         <div className="size-full rounded-lg border-2 border-muted bg-background_alt text-center md:rounded-2xl" />
       )}
-      {!imageLoaded && shouldRenderImage ? (
+      {!imageLoaded && (enabled || showWhenDisabled) ? (
         <div className="absolute bottom-0 left-0 right-0 top-0 flex items-center justify-center">
           <ActivityIndicator />
         </div>
