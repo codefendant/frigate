@@ -29,11 +29,11 @@ export default function AutoUpdatingCameraImage({
   const timeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
-    setKey(Date.now());
-
     if (reloadInterval == -1) {
       return;
     }
+
+    setKey(Date.now());
 
     return () => {
       if (timeoutRef.current) {
@@ -41,6 +41,8 @@ export default function AutoUpdatingCameraImage({
         timeoutRef.current = null;
       }
     };
+    // we know that these deps are correct
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [reloadInterval]);
 
   const handleLoad = useCallback(() => {
@@ -75,7 +77,7 @@ export default function AutoUpdatingCameraImage({
   const [isCached, setIsCached] = useState(false);
 
   const cacheKey = useMemo(() => {
-    let baseParam: string;
+    let baseParam = "";
 
     if (periodicCache && !isCached) {
       const date = new Date(key);
