@@ -117,6 +117,9 @@ export default function LivePlayer({
     offline,
   } = useCameraActivity(cameraConfig);
 
+  const showLastFrameWhenOff =
+    cameraConfig.live?.show_last_frame_when_off ?? false;
+
   const cameraActive = useMemo(
     () =>
       !showStillWithoutActivity ||
@@ -190,6 +193,8 @@ export default function LivePlayer({
     offline,
     windowVisible,
     cameraActive,
+    cameraEnabled,
+    showLastFrameWhenOff,
   ]);
 
   useEffect(() => {
@@ -264,7 +269,7 @@ export default function LivePlayer({
         key={"webrtc_" + key}
         className={`size-full rounded-lg md:rounded-2xl ${liveReady ? "" : "hidden"}`}
         camera={streamName}
-        playbackEnabled={cameraActive || liveReady}
+        playbackEnabled={cameraActive || liveReady || isReEnabling}
         getStats={showStats}
         setStats={setStats}
         audioEnabled={playAudio}
@@ -284,7 +289,7 @@ export default function LivePlayer({
           key={"mse_" + key}
           className={`size-full rounded-lg md:rounded-2xl ${liveReady ? "" : "hidden"}`}
           camera={streamName}
-          playbackEnabled={cameraActive || liveReady}
+          playbackEnabled={cameraActive || liveReady || isReEnabling}
           audioEnabled={playAudio}
           volume={volume}
           playInBackground={playInBackground}
@@ -304,7 +309,7 @@ export default function LivePlayer({
       );
     }
   } else if (preferredLiveMode == "jsmpeg") {
-    if (cameraActive || !showStillWithoutActivity || liveReady) {
+    if (cameraActive || !showStillWithoutActivity || liveReady || isReEnabling) {
       player = (
         <JSMpegPlayer
           key={"jsmpeg_" + key}
@@ -313,7 +318,7 @@ export default function LivePlayer({
           width={cameraConfig.detect.width}
           height={cameraConfig.detect.height}
           playbackEnabled={
-            cameraActive || !showStillWithoutActivity || liveReady
+            cameraActive || !showStillWithoutActivity || liveReady || isReEnabling
           }
           useWebGL={useWebGL}
           setStats={setStats}
@@ -430,7 +435,7 @@ export default function LivePlayer({
           showStillWithoutActivity &&
             !liveReady &&
             !isReEnabling &&
-            cameraEnabled
+            (cameraEnabled || showLastFrameWhenOff)
             ? "visible"
             : "invisible",
         )}
@@ -442,10 +447,11 @@ export default function LivePlayer({
           showFps={false}
           reloadInterval={stillReloadInterval}
           periodicCache
+          showWhenDisabled={showLastFrameWhenOff}
         />
       </div>
 
-      {offline && inDashboard && (
+      {offline && inDashboard && !(!cameraEnabled && showLastFrameWhenOff) && (
         <>
           <div className="absolute inset-0 rounded-lg bg-black/50 md:rounded-2xl" />
           <div className="absolute inset-0 left-1/2 top-1/2 flex -translate-x-1/2 -translate-y-1/2 items-center justify-center">
@@ -490,7 +496,7 @@ export default function LivePlayer({
         </div>
       )}
 
-      {!cameraEnabled && (
+      {!cameraEnabled && !showLastFrameWhenOff && (
         <div className="relative flex h-full w-full items-center justify-center rounded-2xl border border-secondary-foreground bg-background_alt">
           <div className="flex h-32 flex-col items-center justify-center rounded-lg p-4 md:h-48 md:w-48">
             <LuVideoOff className="mb-2 size-8 md:size-10" />
@@ -498,6 +504,15 @@ export default function LivePlayer({
               {t("cameraOff")}
             </p>
           </div>
+        </div>
+      )}
+
+      {!cameraEnabled && showLastFrameWhenOff && (
+        <div className="absolute bottom-2 left-2 z-40">
+          <Chip className="flex items-center gap-1 bg-background/70 text-xs">
+            <LuVideoOff className="size-3" />
+            {t("cameraOff")}
+          </Chip>
         </div>
       )}
 
