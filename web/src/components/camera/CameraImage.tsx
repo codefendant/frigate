@@ -12,6 +12,7 @@ type CameraImageProps = {
   camera: string;
   onload?: () => void;
   searchParams?: string;
+  showWhenDisabled?: boolean;
 };
 
 export default function CameraImage({
@@ -19,6 +20,7 @@ export default function CameraImage({
   camera,
   onload,
   searchParams = "",
+  showWhenDisabled = false,
 }: CameraImageProps) {
   const { data: config } = useSWR("config");
   const apiHost = useApiHost();
