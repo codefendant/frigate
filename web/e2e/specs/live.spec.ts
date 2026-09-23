@@ -113,7 +113,19 @@ test.describe("Live intentional camera off behavior @critical", () => {
     frigateApp.ws.sendCameraActivity({
       front_door: { config: { enabled: true } },
     });
-    frigateApp.ws.send("front_door/offline", "ON");
+    frigateApp.ws.send(
+      "stats",
+      JSON.stringify({
+        cameras: {
+          front_door: {
+            camera_fps: 0,
+          },
+        },
+        service: {
+          uptime: 86400,
+        },
+      }),
+    );
 
     const card = new LivePage(frigateApp.page, !frigateApp.isMobile)
       .cameraCard("front_door")
