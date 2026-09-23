@@ -163,8 +163,13 @@ export default function LivePlayer({
   // camera still state
 
   const stillReloadInterval = useMemo(() => {
-    if (!windowVisible || offline || !showStillWithoutActivity) {
-      return -1; // no reason to update the image when the window is not visible
+    if (
+      !windowVisible ||
+      offline ||
+      !showStillWithoutActivity ||
+      (!cameraEnabled && showLastFrameWhenOff)
+    ) {
+      return -1; // no reason to update the image when the window is not visible or intentionally off
     }
 
     if (liveReady && !cameraActive) {
@@ -309,7 +314,12 @@ export default function LivePlayer({
       );
     }
   } else if (preferredLiveMode == "jsmpeg") {
-    if (cameraActive || !showStillWithoutActivity || liveReady || isReEnabling) {
+    if (
+      cameraActive ||
+      !showStillWithoutActivity ||
+      liveReady ||
+      isReEnabling
+    ) {
       player = (
         <JSMpegPlayer
           key={"jsmpeg_" + key}
@@ -318,7 +328,10 @@ export default function LivePlayer({
           width={cameraConfig.detect.width}
           height={cameraConfig.detect.height}
           playbackEnabled={
-            cameraActive || !showStillWithoutActivity || liveReady || isReEnabling
+            cameraActive ||
+            !showStillWithoutActivity ||
+            liveReady ||
+            isReEnabling
           }
           useWebGL={useWebGL}
           setStats={setStats}
