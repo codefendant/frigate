@@ -56,7 +56,6 @@ class TestHttpLatestFrame(BaseTestHttp):
             # Verify we got an image (webp)
             assert response.headers.get("content-type") == "image/webp"
 
-
     def test_latest_frame_intentionally_off_uses_newest_preview(self):
         camera = "front_door"
         self.app.frigate_config.cameras[camera].enabled = False
