@@ -86,10 +86,13 @@ class PlusApi:
             )
         # check for the add-on options file
         elif os.path.isfile("/data/options.json"):
-            with open("/data/options.json") as f:
-                raw_options = f.read()
-            options = json.loads(raw_options)
-            self.key = options.get("plus_api_key")
+            try:
+                with open("/data/options.json") as f:
+                    raw_options = f.read()
+                options = json.loads(raw_options)
+                self.key = options.get("plus_api_key")
+            except (OSError, ValueError):
+                logger.warning("Unable to read Frigate add-on options; Frigate+ disabled.")
 
         if self.key is not None and not re.match(
             r"[a-z0-9]{8}-[a-z0-9]{4}-[a-z0-9]{4}-[a-z0-9]{4}-[a-z0-9]{12}:[a-z0-9]{40}",
@@ -170,6 +173,7 @@ class PlusApi:
         r = self._post(
             "image/create", {"id": presigned_urls["imageId"], "camera": camera}
         )
+
         if not r.ok:
             raise Exception(r.text)
 
@@ -199,10 +203,10 @@ class PlusApi:
                 "regionY": region[1],
                 "regionW": region[2],
                 "regionH": region[3],
-                "score": score,
                 "model_hash": model_hash,
                 "model_type": model_type,
                 "detector_type": detector_type,
+                "score": score,
             },
         )
 
