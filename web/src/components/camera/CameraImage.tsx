@@ -85,7 +85,7 @@ export default function CameraImage({
 
   return (
     <div className={className} ref={containerRef}>
-      {enabled ? (
+      {enabled || showWhenDisabled ? (
         <img
           ref={imgRef}
           className={cn(
@@ -103,7 +103,7 @@ export default function CameraImage({
       ) : (
         <div className="size-full rounded-lg border-2 border-muted bg-background_alt text-center md:rounded-2xl" />
       )}
-      {!imageLoaded && enabled ? (
+      {!imageLoaded && (enabled || showWhenDisabled) ? (
         <div className="absolute bottom-0 left-0 right-0 top-0 flex items-center justify-center">
           <ActivityIndicator />
         </div>
