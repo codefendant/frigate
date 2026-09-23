@@ -96,6 +96,7 @@ export default function AutoUpdatingCameraImage({
         onload={handleLoad}
         searchParams={cacheKey}
         className={cameraClasses}
+        showWhenDisabled={showWhenDisabled}
       />
       {showFps ? <span className="text-xs">Displaying at {fps}fps</span> : null}
     </div>
