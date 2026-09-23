@@ -65,7 +65,7 @@ def get_jpg_bytes(image: ndarray, max_dim: int, quality: int) -> bytes:
 
     original = cv2.resize(image, dsize=(width, height), interpolation=cv2.INTER_AREA)
 
-    ret, jpg = cv2.imencode(".jpg", original, [int(cv2.IMWRITE_JPEG_QUALITY), quality])
+    ret, jpg = cv2.imencode(".jpg", original, [int(cv2.IMWRITE_JPEG_QUALITY), 70])
     jpg_bytes = jpg.tobytes()
     return jpg_bytes if isinstance(jpg_bytes, bytes) else b""
 
@@ -92,7 +92,9 @@ class PlusApi:
                 options = json.loads(raw_options)
                 self.key = options.get("plus_api_key")
             except (OSError, ValueError):
-                logger.warning("Unable to read Frigate add-on options; Frigate+ disabled.")
+                logger.warning(
+                    "Unable to read Frigate add-on options; Frigate+ disabled."
+                )
 
         if self.key is not None and not re.match(
             r"[a-z0-9]{8}-[a-z0-9]{4}-[a-z0-9]{4}-[a-z0-9]{4}-[a-z0-9]{12}:[a-z0-9]{40}",
@@ -206,7 +208,6 @@ class PlusApi:
                 "model_hash": model_hash,
                 "model_type": model_type,
                 "detector_type": detector_type,
-                "score": score,
             },
         )
 
