@@ -272,7 +272,7 @@ export default function LivePlayer({
         key={"webrtc_" + key}
         className={`size-full rounded-lg md:rounded-2xl ${liveReady ? "" : "hidden"}`}
         camera={streamName}
-        playbackEnabled={cameraActive || liveReady}
+        playbackEnabled={cameraActive || liveReady || isReEnabling}
         getStats={showStats}
         setStats={setStats}
         audioEnabled={playAudio}
@@ -291,7 +291,7 @@ export default function LivePlayer({
           key={"mse_" + key}
           className={`size-full rounded-lg md:rounded-2xl ${liveReady ? "" : "hidden"}`}
           camera={streamName}
-          playbackEnabled={cameraActive || liveReady}
+          playbackEnabled={cameraActive || liveReady || isReEnabling}
           audioEnabled={playAudio}
           volume={volume}
           playInBackground={playInBackground}
@@ -311,7 +311,7 @@ export default function LivePlayer({
       );
     }
   } else if (preferredLiveMode == "jsmpeg") {
-    if (cameraActive || !showStillWithoutActivity || liveReady) {
+    if (cameraActive || !showStillWithoutActivity || liveReady || isReEnabling) {
       player = (
         <JSMpegPlayer
           key={"jsmpeg_" + key}
@@ -320,7 +320,7 @@ export default function LivePlayer({
           width={cameraConfig.detect.width}
           height={cameraConfig.detect.height}
           playbackEnabled={
-            cameraActive || !showStillWithoutActivity || liveReady
+            cameraActive || !showStillWithoutActivity || liveReady || isReEnabling
           }
           useWebGL={useWebGL}
           setStats={setStats}
