@@ -51,7 +51,6 @@ test.describe("Live Dashboard @critical", () => {
   });
 });
 
-
 test.describe("Live intentional camera off behavior @critical", () => {
   test("opted-in disabled camera retains the still with a compact off indicator", async ({
     frigateApp,
