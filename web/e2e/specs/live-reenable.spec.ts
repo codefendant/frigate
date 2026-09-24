@@ -36,7 +36,7 @@ test.describe("Live camera re-enable playback @critical @mobile", () => {
     await expect(card.getByText("Camera is off")).toBeVisible({
       timeout: 5_000,
     });
-    await expect(card.locator(".jsmpeg-player")).toHaveCount(0);
+    await expect(card.locator(".jsmpeg")).toHaveCount(0);
 
     frigateApp.ws.sendCameraActivity({
       [CAMERA]: {
@@ -47,7 +47,7 @@ test.describe("Live camera re-enable playback @critical @mobile", () => {
     });
 
     await expect(card.getByText("Camera is off")).toHaveCount(0);
-    await expect(card.locator(".jsmpeg-player")).toHaveCount(1, {
+    await expect(card.locator(".jsmpeg")).toHaveCount(1, {
       timeout: 5_000,
     });
   });
