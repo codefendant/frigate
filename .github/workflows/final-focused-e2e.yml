@@ -1,0 +1,29 @@
+name: Final focused E2E validation
+
+on:
+  push:
+    branches:
+      - validation/final-focused-e2e
+
+permissions:
+  contents: read
+
+jobs:
+  focused-e2e:
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 20.x
+      - run: npm install
+      - run: npx playwright install chromium --with-deps
+      - name: Build web for E2E
+        run: npm run e2e:build
+      - name: Run focused live E2E tests
+        run: npx playwright test --config e2e/playwright.config.ts e2e/specs/live.spec.ts e2e/specs/live-reenable.spec.ts
