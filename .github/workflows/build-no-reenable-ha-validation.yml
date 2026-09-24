@@ -1,0 +1,72 @@
+name: Build No Re-enable HA Validation
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - validation/no-reenable
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build_rpi:
+    name: Build Raspberry Pi HA validation image
+    runs-on: ubuntu-22.04-arm
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Remove only the added re-enable playback conditions
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path("web/src/components/player/LivePlayer.tsx")
+          text = path.read_text()
+          text = text.replace(
+              "playbackEnabled={cameraActive || liveReady || isReEnabling}",
+              "playbackEnabled={cameraActive || liveReady}",
+          )
+          text = text.replace(
+              "      cameraActive ||\n      !showStillWithoutActivity ||\n      liveReady ||\n      isReEnabling\n",
+              "      cameraActive || !showStillWithoutActivity || liveReady\n",
+          )
+          text = text.replace(
+              "            cameraActive ||\n            !showStillWithoutActivity ||\n            liveReady ||\n            isReEnabling\n",
+              "            cameraActive || !showStillWithoutActivity || liveReady\n",
+          )
+          path.write_text(text)
+          PY
+
+      - name: Apply validation-only Home Assistant compatibility workarounds
+        run: |
+          git fetch origin feature/show-last-frame-dev --depth=1
+          git show FETCH_HEAD:frigate/plus.py > frigate/plus.py
+          git show FETCH_HEAD:frigate/api/auth.py > frigate/api/auth.py
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to the Container registry
+        uses: docker/login-action@465a07811f14bebb1938fbed4728c6a1ff8901fc
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create version file
+        run: make version
+
+      - name: Build and push Raspberry Pi image
+        uses: docker/bake-action@v7
+        with:
+          source: .
+          push: true
+          targets: rpi
+          files: docker/rpi/rpi.hcl
+          set: |
+            rpi.tags=ghcr.io/codefendant/frigate:last-frame-no-reenable-ha-rpi
+            *.cache-from=type=registry,ref=ghcr.io/codefendant/frigate:cache-arm64
+            *.cache-to=type=registry,ref=ghcr.io/codefendant/frigate:cache-arm64,mode=max
