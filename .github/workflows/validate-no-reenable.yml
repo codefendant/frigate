@@ -1,0 +1,203 @@
+name: Validate No Re-enable Playback
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - validation/no-reenable
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  DEFAULT_PYTHON: 3.11
+
+jobs:
+  web_lint:
+    name: Web - Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Remove only the added re-enable playback conditions
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path("web/src/components/player/LivePlayer.tsx")
+          text = path.read_text()
+          text = text.replace(
+              "playbackEnabled={cameraActive || liveReady || isReEnabling}",
+              "playbackEnabled={cameraActive || liveReady}",
+          )
+          text = text.replace(
+              "      cameraActive ||\n      !showStillWithoutActivity ||\n      liveReady ||\n      isReEnabling\n",
+              "      cameraActive || !showStillWithoutActivity || liveReady\n",
+          )
+          text = text.replace(
+              "            cameraActive ||\n            !showStillWithoutActivity ||\n            liveReady ||\n            isReEnabling\n",
+              "            cameraActive || !showStillWithoutActivity || liveReady\n",
+          )
+          path.write_text(text)
+          PY
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 20.x
+      - run: npm install
+        working-directory: ./web
+      - name: Lint
+        run: npm run lint
+        working-directory: ./web
+      - name: Check i18n keys
+        run: npm run i18n:extract:ci
+        working-directory: ./web
+
+  web_e2e:
+    name: Web - E2E Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Remove only the added re-enable playback conditions
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path("web/src/components/player/LivePlayer.tsx")
+          text = path.read_text()
+          text = text.replace(
+              "playbackEnabled={cameraActive || liveReady || isReEnabling}",
+              "playbackEnabled={cameraActive || liveReady}",
+          )
+          text = text.replace(
+              "      cameraActive ||\n      !showStillWithoutActivity ||\n      liveReady ||\n      isReEnabling\n",
+              "      cameraActive || !showStillWithoutActivity || liveReady\n",
+          )
+          text = text.replace(
+              "            cameraActive ||\n            !showStillWithoutActivity ||\n            liveReady ||\n            isReEnabling\n",
+              "            cameraActive || !showStillWithoutActivity || liveReady\n",
+          )
+          path.write_text(text)
+          PY
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 20.x
+      - run: npm install
+        working-directory: ./web
+      - name: Install Playwright Chromium
+        run: npx playwright install chromium --with-deps
+        working-directory: ./web
+      - name: Build web for E2E
+        run: npm run e2e:build
+        working-directory: ./web
+      - name: Run E2E tests
+        run: npm run e2e
+        working-directory: ./web
+      - name: Upload test artifacts
+        uses: actions/upload-artifact@v7
+        if: failure()
+        with:
+          name: playwright-report
+          path: |
+            web/test-results/
+            web/playwright-report/
+          retention-days: 7
+
+  python_checks:
+    name: Python Checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7.0.0
+        with:
+          python-version: ${{ env.DEFAULT_PYTHON }}
+      - name: Install requirements
+        run: |
+          python3 -m pip install -U pip
+          python3 -m pip install -r docker/main/requirements-dev.txt
+      - name: Check formatting
+        run: ruff format --check --diff frigate migrations docker *.py
+      - name: Check lint
+        run: ruff check frigate migrations docker *.py
+
+  python_tests:
+    name: Python Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 20.x
+      - name: Install devcontainer cli
+        run: npm install --global @devcontainers/cli
+      - name: Build devcontainer
+        env:
+          DOCKER_BUILDKIT: "1"
+        run: devcontainer build --workspace-folder .
+      - name: Start devcontainer
+        run: devcontainer up --workspace-folder .
+      - name: Run mypy
+        run: devcontainer exec --workspace-folder . bash -lc "python3 -u -m mypy --config-file frigate/mypy.ini frigate"
+      - name: Check API spec
+        run: devcontainer exec --workspace-folder . bash -lc "python3 generate_api_auth_spec.py --check"
+      - name: Run unit tests
+        run: devcontainer exec --workspace-folder . bash -lc "python3 -u -m unittest"
+
+  build_rpi:
+    name: Build Raspberry Pi ARM64 image
+    needs:
+      - web_lint
+      - web_e2e
+      - python_checks
+      - python_tests
+    runs-on: ubuntu-22.04-arm
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Remove only the added re-enable playback conditions
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path("web/src/components/player/LivePlayer.tsx")
+          text = path.read_text()
+          text = text.replace(
+              "playbackEnabled={cameraActive || liveReady || isReEnabling}",
+              "playbackEnabled={cameraActive || liveReady}",
+          )
+          text = text.replace(
+              "      cameraActive ||\n      !showStillWithoutActivity ||\n      liveReady ||\n      isReEnabling\n",
+              "      cameraActive || !showStillWithoutActivity || liveReady\n",
+          )
+          text = text.replace(
+              "            cameraActive ||\n            !showStillWithoutActivity ||\n            liveReady ||\n            isReEnabling\n",
+              "            cameraActive || !showStillWithoutActivity || liveReady\n",
+          )
+          path.write_text(text)
+          PY
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      - name: Log in to the Container registry
+        uses: docker/login-action@465a07811f14bebb1938fbed4728c6a1ff8901fc
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Create version file
+        run: make version
+      - name: Build and push Raspberry Pi image
+        uses: docker/bake-action@v7
+        with:
+          source: .
+          push: true
+          targets: rpi
+          files: docker/rpi/rpi.hcl
+          set: |
+            rpi.tags=ghcr.io/codefendant/frigate:last-frame-no-reenable-rpi
+            *.cache-from=type=registry,ref=ghcr.io/codefendant/frigate:cache-arm64
+            *.cache-to=type=registry,ref=ghcr.io/codefendant/frigate:cache-arm64,mode=max
