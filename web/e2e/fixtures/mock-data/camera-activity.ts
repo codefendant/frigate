@@ -67,9 +67,15 @@ export function cameraActivityPayload(
 ): string {
   const activity: Record<string, CameraActivityState> = {};
   for (const name of cameras) {
+    const defaults = defaultCameraActivity();
+    const override = overrides?.[name];
     activity[name] = {
-      ...defaultCameraActivity(),
-      ...overrides?.[name],
+      ...defaults,
+      ...override,
+      config: {
+        ...defaults.config,
+        ...override?.config,
+      },
     } as CameraActivityState;
   }
   // Double-serialize: the WS payload is a JSON string
