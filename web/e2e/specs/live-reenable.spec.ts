@@ -3,7 +3,7 @@ import { LivePage } from "../pages/live.page";
 
 const CAMERA = "front_door";
 
-test.describe("Live camera re-enable playback @critical", () => {
+test.describe("Live camera re-enable playback @critical @mobile", () => {
   test("re-enabling an opted-in camera restarts live playback without activity", async ({
     frigateApp,
   }) => {
