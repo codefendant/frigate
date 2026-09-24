@@ -324,7 +324,6 @@ def get_remote_addr(request: Request):
             network = ipaddress.ip_network(proxy)
         except ValueError:
             logger.warning(f"Unable to parse trusted network: {proxy}")
-            continue
         trusted_proxies.append(network)
 
     # return the first remote address that is not trusted
@@ -478,6 +477,13 @@ def create_encoded_jwt(user, role, expiration, secret):
 
 
 def set_jwt_cookie(response: Response, cookie_name, encoded_jwt, max_age, secure):
+    # TODO: ideally this would set secure as well, but that requires TLS
+    # SameSite is intentionally left unset (browsers default to Lax). Setting
+    # SameSite=Lax/Strict would stop the cookie from being sent in cross-origin
+    # iframes, breaking embedded views such as the Home Assistant Frigate card.
+    # CSRF is instead mitigated by requiring a custom X-CSRF-TOKEN header, which
+    # cross-origin pages cannot set without a CORS preflight that Frigate never
+    # grants (see check_csrf in api/fastapi_app.py).
     response.set_cookie(
         key=cookie_name,
         value=encoded_jwt,
@@ -503,6 +509,8 @@ def require_role(required_roles: list[str]):
     async def role_checker(request: Request):
         proxy_config: ProxyConfig = request.app.frigate_config.proxy
         config_roles = list(request.app.frigate_config.auth.roles.keys())
+
+        # Get role from header (could be comma-separated)
         role_header = request.headers.get("remote-role")
         roles = (
             [r.strip() for r in role_header.split(proxy_config.separator)]
@@ -510,9 +518,11 @@ def require_role(required_roles: list[str]):
             else []
         )
 
+        # Check if we have any roles
         if not roles:
             raise HTTPException(status_code=403, detail="Role not provided")
 
+        # enforce config roles
         valid_roles = [r for r in roles if r in config_roles]
         if not valid_roles:
             raise HTTPException(
@@ -536,58 +546,148 @@ def require_role(required_roles: list[str]):
 def resolve_role(
     headers: dict, proxy_config: ProxyConfig, config_roles: set[str]
 ) -> str:
+    """
+    Determine the effective role for a request based on proxy headers and configuration.
+
+    Order of resolution:
+            1. If a role header is defined in proxy_config.header_map.role:
+                 - If a role_map is configured, treat the header as group claims
+                     (split by proxy_config.separator) and map to roles.
+                     Admin matches short-circuit to admin.
+                 - If no role_map is configured, treat the header as role names directly.
+      2. If no valid role is found, return proxy_config.default_role if it's valid in config_roles, else 'viewer'.
+         The literal value 'none' is a valid default and means access should be denied.
+
+    Args:
+        headers (dict): Incoming request headers (case-insensitive).
+        proxy_config (ProxyConfig): Proxy configuration.
+        config_roles (set[str]): Set of valid roles from config.
+
+    Returns:
+        str: Resolved role (one of config_roles or validated default).
+    """
     default_role = proxy_config.default_role
     role_header = proxy_config.header_map.role
 
+    # Validate default_role against config; fallback to 'viewer' if invalid.
+    # "none" is a sentinel meaning "deny access when no mapping matches"; it is
+    # reserved in AuthConfig.validate_roles so it is never a configured role.
     validated_default = (
         default_role
         if default_role in config_roles or default_role == "none"
         else "viewer"
     )
     if not config_roles:
+        # Edge case: no roles defined
         validated_default = "none" if default_role == "none" else "viewer"
 
     if not role_header:
+        logger.debug(
+            "No role header configured in proxy_config.header_map. Returning validated default role '%s'.",
+            validated_default,
+        )
         return validated_default
 
     raw_value = headers.get(role_header, "")
+    logger.debug("Raw role header value from '%s': %r", role_header, raw_value)
+
     if not raw_value:
+        logger.debug(
+            "Role header missing or empty. Returning validated default role '%s'.",
+            validated_default,
+        )
         return validated_default
 
+    # role_map configured, treat header as group claims
     if proxy_config.header_map.role_map:
         groups = [
             g.strip() for g in raw_value.split(proxy_config.separator) if g.strip()
         ]
+        logger.debug("Parsed groups from role header: %s", groups)
+
         matched_roles = {
             role_name
             for role_name, required_groups in proxy_config.header_map.role_map.items()
             if any(group in groups for group in required_groups)
         }
+        logger.debug("Matched roles from role_map: %s", matched_roles)
 
+        # If admin matches, prioritize it to avoid accidental downgrade when
+        # users belong to both admin and lower-privilege groups.
         if "admin" in matched_roles and "admin" in config_roles:
+            logger.debug("Resolved role (with role_map) to 'admin'.")
             return "admin"
 
         if matched_roles:
-            return next(
+            resolved = next(
                 (r for r in config_roles if r in matched_roles), validated_default
             )
+            logger.debug("Resolved role (with role_map) to '%s'.", resolved)
+            return resolved
 
+        logger.debug(
+            "No role_map match for groups '%s'. Using validated default role '%s'.",
+            raw_value,
+            validated_default,
+        )
         return validated_default
 
+    # no role_map, treat as role names directly
     roles_from_header = [
         r.strip().lower() for r in raw_value.split(proxy_config.separator) if r.strip()
     ]
-    return next(
+    logger.debug("Parsed roles directly from header: %s", roles_from_header)
+
+    resolved = next(
         (r for r in config_roles if r in roles_from_header),
         validated_default,
     )
+    if resolved == validated_default and roles_from_header:
+        logger.debug(
+            "Provided proxy role header values '%s' did not contain a valid role. Using validated default role '%s'.",
+            raw_value,
+            validated_default,
+        )
+    else:
+        logger.debug("Resolved role (direct header) to '%s'.", resolved)
+
+    return resolved
 
 
+# Endpoints
 @router.get(
     "/auth",
     dependencies=[Depends(allow_public())],
     summary="Authenticate request",
+    description=(
+        "Authenticates the current request based on proxy headers or JWT token. "
+        "This endpoint verifies authentication credentials and manages JWT token refresh. "
+        "On success, no JSON body is returned; authentication state is communicated via response headers and cookies."
+    ),
     status_code=202,
+    responses={
+        202: {
+            "description": "Authentication Accepted (no response body)",
+            "headers": {
+                "remote-user": {
+                    "description": 'Authenticated username or "viewer" in proxy-only mode',
+                    "schema": {"type": "string"},
+                },
+                "remote-role": {
+                    "description": "Resolved role (e.g., admin, viewer, or custom)",
+                    "schema": {"type": "string"},
+                },
+                "Set-Cookie": {
+                    "description": "May include refreshed JWT cookie when applicable",
+                    "schema": {"type": "string"},
+                },
+            },
+        },
+        401: {"description": "Authentication Failed"},
+        403: {
+            "description": "Access Denied (proxy user resolved to a default role of 'none')"
+        },
+    },
 )
 def auth(request: Request):
     auth_config: AuthConfig = request.app.frigate_config.auth
@@ -595,6 +695,11 @@ def auth(request: Request):
 
     success_response = Response("", status_code=202)
 
+    # dont require auth if the request is on the internal port
+    # this header is set by Frigate's nginx proxy, so it cant be spoofed.
+    # the port is the boot-time snapshot rather than the live config value:
+    # nginx's listeners are fixed at container start, so an in-memory config
+    # change must never move the port that is trusted here
     if (
         int(request.headers.get("x-server-port", default=0))
         == request.app.auth_internal_port
@@ -605,16 +710,21 @@ def auth(request: Request):
 
     fail_response = Response("", status_code=401)
 
+    # ensure the proxy secret matches if configured
     if (
         proxy_config.auth_secret is not None
         and request.headers.get("x-proxy-secret", "") != proxy_config.auth_secret
     ):
+        logger.debug("X-Proxy-Secret header does not match configured secret value")
         return fail_response
 
     original_url = request.headers.get("x-original-url")
     frigate_config = request.app.frigate_config
 
+    # if auth is disabled, just apply the proxy header map and return success
     if not auth_config.enabled:
+        # pass the user header value from the upstream proxy if a mapping is specified
+        # or use viewer if none are specified
         user_header = proxy_config.header_map.user
         success_response.headers["remote-user"] = (
             request.headers.get(user_header, default="viewer")
@@ -622,10 +732,12 @@ def auth(request: Request):
             else "viewer"
         )
 
+        # parse header and resolve a valid role
         config_roles_set = set(auth_config.roles.keys())
         role = resolve_role(request.headers, proxy_config, config_roles_set)
 
         if role == "none":
+            logger.debug("Resolved role is 'none', denying access")
             return Response("", status_code=403)
 
         success_response.headers["remote-role"] = role
@@ -640,6 +752,7 @@ def auth(request: Request):
 
         return success_response
 
+    # now apply authentication
     fail_response.headers["location"] = "/login"
 
     JWT_COOKIE_NAME = request.app.frigate_config.auth.cookie_name
@@ -653,31 +766,61 @@ def auth(request: Request):
         "authorization"
     ].startswith("Bearer "):
         jwt_source = "authorization"
+        logger.debug("Found authorization header")
         encoded_token = request.headers["authorization"].replace("Bearer ", "")
     elif JWT_COOKIE_NAME in request.cookies:
         jwt_source = "cookie"
+        logger.debug("Found jwt cookie")
         encoded_token = request.cookies[JWT_COOKIE_NAME]
 
     if encoded_token is None:
+        logger.debug("No jwt token found")
         return fail_response
 
     try:
         token = jwt.decode(encoded_token, request.app.jwt_token)
-        if "sub" not in token.claims or "role" not in token.claims or "exp" not in token.claims:
+        if "sub" not in token.claims:
+            logger.debug("user not set in jwt token")
+            return fail_response
+        if "role" not in token.claims:
+            logger.debug("role not set in jwt token")
+            return fail_response
+        if "exp" not in token.claims:
+            logger.debug("exp not set in jwt token")
             return fail_response
 
         user = token.claims.get("sub")
         role = token.claims.get("role")
 
+        # the token keeps the role it was issued with, so a role removed from
+        # the config since then must send the user back through login
         if role not in auth_config.roles:
+            logger.debug("jwt role %s is not in the config", role)
             return fail_response
 
         current_time = int(time.time())
+
+        # if the jwt is expired
         expiration = int(token.claims.get("exp"))
+        logger.debug(
+            f"current time:   {datetime.fromtimestamp(current_time).strftime('%c')}"
+        )
+        logger.debug(
+            f"jwt expires at: {datetime.fromtimestamp(expiration).strftime('%c')}"
+        )
+        logger.debug(
+            f"jwt refresh at: {datetime.fromtimestamp(expiration - JWT_REFRESH).strftime('%c')}"
+        )
         if expiration <= current_time:
+            logger.debug("jwt token expired")
             return fail_response
 
+        # if the jwt cookie is expiring soon
         if jwt_source == "cookie" and expiration - JWT_REFRESH <= current_time:
+            logger.debug("jwt token expiring soon, refreshing cookie")
+
+            # Check if password has been changed since token was issued
+            # If so, force re-login by rejecting the refresh
             try:
                 user_obj = User.get_by_id(user)
                 if user_obj.password_changed_at is not None:
@@ -686,8 +829,12 @@ def auth(request: Request):
                         user_obj.password_changed_at.timestamp()
                     )
                     if token_iat < password_changed_timestamp:
+                        logger.debug(
+                            "jwt token issued before password change, rejecting refresh"
+                        )
                         return fail_response
             except DoesNotExist:
+                logger.debug("user not found")
                 return fail_response
 
             new_expiration = current_time + JWT_SESSION_LENGTH
@@ -723,6 +870,7 @@ def auth(request: Request):
     "/profile",
     dependencies=[Depends(allow_any_authenticated())],
     summary="Get user profile",
+    description="Returns the current authenticated user's profile including username, role, and allowed cameras. This endpoint requires authentication and returns information about the user's permissions.",
 )
 def profile(request: Request):
     username = request.headers.get("remote-user", "viewer")
@@ -761,6 +909,7 @@ def profile(request: Request):
     "/logout",
     dependencies=[Depends(allow_public())],
     summary="Logout user",
+    description="Logs out the current user by clearing the session cookie. After logout, subsequent requests will require re-authentication.",
 )
 def logout(request: Request):
     auth_config: AuthConfig = request.app.frigate_config.auth
@@ -776,6 +925,7 @@ limiter = Limiter(key_func=get_remote_addr)
     "/login",
     dependencies=[Depends(allow_public())],
     summary="Login with credentials",
+    description='Authenticates a user with username and password. Returns a JWT token as a secure HTTP-only cookie that can be used for subsequent API requests. The JWT token can also be retrieved from the response and used as a Bearer token in the Authorization header.\n\nExample using Bearer token:\n```\ncurl -H "Authorization: Bearer <token_value>" https://frigate_ip:8971/api/profile\n```',
 )
 @limiter.limit(limit_value=rateLimiter.get_limit)
 def login(request: Request, body: AppPostLoginBody):
@@ -804,6 +954,9 @@ def login(request: Request, body: AppPostLoginBody):
         role = getattr(db_user, "role", "viewer")
         config_roles_set = set(request.app.frigate_config.auth.roles.keys())
         if role not in config_roles_set:
+            logger.warning(
+                f"User {db_user.username} has an invalid role {role}, falling back to 'viewer'."
+            )
             role = "viewer"
         expiration = int(time.time()) + JWT_SESSION_LENGTH
         encoded_jwt = create_encoded_jwt(user, role, expiration, request.app.jwt_token)
@@ -815,6 +968,8 @@ def login(request: Request, body: AppPostLoginBody):
             JWT_SESSION_LENGTH,
             JWT_COOKIE_SECURE,
         )
+        # Clear admin_first_time_login flag after successful admin login so the
+        # UI stops showing the first-time login documentation link.
         if role == "admin":
             request.app.frigate_config.auth.admin_first_time_login = False
 
@@ -831,6 +986,7 @@ def login(request: Request, body: AppPostLoginBody):
     "/users",
     dependencies=[Depends(require_role(["admin"]))],
     summary="Get all users",
+    description="Returns a list of all users with their usernames and roles. Requires admin role. Each user object contains the username and assigned role.",
 )
 def get_users():
     exports = (
@@ -843,6 +999,7 @@ def get_users():
     "/users",
     dependencies=[Depends(require_role(["admin"]))],
     summary="Create new user",
+    description="Creates a new user with the specified username, password, and role. Requires admin role. Password must be at least 12 characters long.",
 )
 def create_user(
     request: Request,
@@ -860,6 +1017,7 @@ def create_user(
             status_code=400,
         )
 
+    # Validate password strength
     is_valid, error_message = validate_password_strength(body.password)
     if not is_valid:
         return JSONResponse(
@@ -885,8 +1043,10 @@ def create_user(
     "/users/{username}",
     dependencies=[Depends(require_role(["admin"]))],
     summary="Delete user",
+    description="Deletes a user by username. The built-in admin user cannot be deleted. Requires admin role. Returns success message or error if user not found.",
 )
 def delete_user(request: Request, username: str):
+    # Prevent deletion of the built-in admin user
     if username == "admin":
         return JSONResponse(
             content={"message": "Cannot delete admin user"}, status_code=403
@@ -901,6 +1061,7 @@ def delete_user(request: Request, username: str):
     "/users/{username}/password",
     dependencies=[Depends(allow_any_authenticated())],
     summary="Update user password",
+    description="Updates a user's password. Users can only change their own password unless they have admin role. Requires the current password to verify identity for non-admin users. Password must be at least 12 characters long. If user changes their own password, a new JWT cookie is automatically issued.",
 )
 @limiter.limit(limit_value=rateLimiter.get_limit)
 async def update_password(
@@ -910,11 +1071,14 @@ async def update_password(
 ):
     current_user = await get_current_user(request)
     if isinstance(current_user, JSONResponse):
+        # auth failed
         return current_user
 
     current_username = current_user.get("username")
     current_role = current_user.get("role")
 
+    # Only admins may target another account. This has to cover every non-admin
+    # role rather than just viewer, since custom roles are arbitrary names
     if current_role != "admin" and current_username != username:
         raise HTTPException(
             status_code=403, detail="Users can only update their own password"
@@ -927,6 +1091,8 @@ async def update_password(
     except DoesNotExist:
         return JSONResponse(content={"message": "User not found"}, status_code=404)
 
+    # Require old_password when non-admin user is changing any password
+    # Admin users changing passwords do NOT need to provide the current password
     if current_role != "admin":
         if not body.old_password:
             return JSONResponse(
@@ -939,6 +1105,7 @@ async def update_password(
                 status_code=401,
             )
 
+    # Validate new password strength
     is_valid, error_message = validate_password_strength(body.password)
     if not is_valid:
         return JSONResponse(
@@ -956,6 +1123,7 @@ async def update_password(
 
     response = JSONResponse(content={"success": True})
 
+    # If user changed their own password, issue a new JWT to keep them logged in
     if current_username == username:
         JWT_COOKIE_NAME = request.app.frigate_config.auth.cookie_name
         JWT_COOKIE_SECURE = request.app.frigate_config.auth.cookie_secure
@@ -965,6 +1133,7 @@ async def update_password(
         encoded_jwt = create_encoded_jwt(
             username, current_role, expiration, request.app.jwt_token
         )
+        # Set new JWT cookie on response
         set_jwt_cookie(
             response,
             JWT_COOKIE_NAME,
@@ -980,6 +1149,7 @@ async def update_password(
     "/users/{username}/role",
     dependencies=[Depends(require_role(["admin"]))],
     summary="Update user role",
+    description="Updates a user's role. The built-in admin user's role cannot be modified. Requires admin role. Valid roles are defined in the configuration.",
 )
 async def update_role(
     request: Request,
@@ -988,9 +1158,11 @@ async def update_role(
 ):
     current_user = await get_current_user(request)
     if isinstance(current_user, JSONResponse):
+        # auth failed
         return current_user
 
     current_role = current_user.get("role")
+    # viewers can't change anyone's role
     if current_role == "viewer":
         raise HTTPException(
             status_code=403, detail="Admin role is required to change user roles"
@@ -1017,7 +1189,7 @@ async def require_camera_access(
 ):
     """Dependency to enforce camera access based on user role."""
     if camera_name is None:
-        return
+        return  # For lists, filter later
 
     current_user = await get_current_user(request)
     if isinstance(current_user, JSONResponse):
@@ -1062,6 +1234,11 @@ def _get_stream_owner_cameras(request: Request, stream_name: str) -> set[str]:
     return owner_cameras
 
 
+# nginx proxies these paths straight to go2rtc with authentication-only checks
+# (see auth_request.conf). Each names the desired stream via the `src` query
+# param, so the camera-level check must happen here in the `/auth` subrequest —
+# `require_go2rtc_stream_access` only guards the REST `/go2rtc/streams/{name}`
+# endpoint, not these proxied live-stream paths.
 GO2RTC_STREAM_PROXY_PATHS = frozenset(
     {
         "/live/mse/api/ws",
@@ -1074,6 +1251,14 @@ GO2RTC_STREAM_PROXY_PATHS = frozenset(
 def deny_response_for_go2rtc_stream(
     original_url: str | None, role: str | None, request: Request
 ) -> int | None:
+    """Block role-restricted users from go2rtc live streams they cannot access.
+
+    Returns 403 when any `src` stream named in `original_url` resolves to a
+    camera outside the role's allow-list (or when no `src` is provided on a
+    stream-proxy path), otherwise None. Mirrors the resolution logic in
+    `require_go2rtc_stream_access` so substream names map to their owning
+    camera correctly.
+    """
     if not original_url:
         return None
 
@@ -1083,11 +1268,14 @@ def deny_response_for_go2rtc_stream(
 
     frigate_config = request.app.frigate_config
 
+    # admin and full-access roles (no allow-list) bypass the camera check
     if not role or not is_role_restricted(role, frigate_config):
         return None
 
     sources = parse_qs(parsed.query).get("src", [])
     if not sources:
+        # a stream-proxy request naming no stream has nothing legitimate to
+        # show a restricted user
         return 403
 
     allowed_cameras = set(
@@ -1098,6 +1286,7 @@ def deny_response_for_go2rtc_stream(
         )
     )
 
+    # deny if any requested source resolves outside the allow-list
     for src in sources:
         if not (_get_stream_owner_cameras(request, src) & allowed_cameras):
             return 403
@@ -1109,6 +1298,7 @@ async def require_go2rtc_stream_access(
     stream_name: str | None = None,
     request: Request = None,
 ):
+    """Dependency to enforce go2rtc stream access based on owning camera access."""
     if stream_name is None:
         return
 
@@ -1130,6 +1320,7 @@ async def require_go2rtc_stream_access(
     roles_dict = request.app.frigate_config.auth.roles
     allowed_cameras = User.get_allowed_cameras(role, roles_dict, all_camera_names)
 
+    # Admin or full access bypasses
     if role == "admin" or not roles_dict.get(role):
         return
 
@@ -1148,7 +1339,7 @@ async def get_allowed_cameras_for_filter(request: Request):
     """Dependency to get allowed_cameras for filtering lists."""
     current_user = await get_current_user(request)
     if isinstance(current_user, JSONResponse):
-        return []
+        return []  # Unauthorized: no cameras
 
     role = current_user["role"]
     all_camera_names = set(request.app.frigate_config.cameras.keys())
@@ -1160,6 +1351,13 @@ async def require_full_camera_access(
     request: Request,
     allowed_cameras: list[str] = Depends(get_allowed_cameras_for_filter),
 ):
+    """Dependency for endpoints returning data that spans every camera.
+
+    Some responses cannot be meaningfully scoped to a subset of cameras, so
+    rather than filter them the endpoint is limited to callers who can already
+    see every camera. Admin and viewer always qualify; a custom role qualifies
+    only when its camera list covers all configured cameras.
+    """
     all_camera_names = set(request.app.frigate_config.cameras.keys())
 
     if not all_camera_names.issubset(allowed_cameras):
