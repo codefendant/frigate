@@ -38,6 +38,13 @@ export interface CameraActivityState {
   }>;
 }
 
+export type CameraActivityOverride = Omit<
+  Partial<CameraActivityState>,
+  "config"
+> & {
+  config?: Partial<CameraActivityState["config"]>;
+};
+
 function defaultCameraActivity(): CameraActivityState {
   return {
     config: {
@@ -63,7 +70,7 @@ function defaultCameraActivity(): CameraActivityState {
 
 export function cameraActivityPayload(
   cameras: string[],
-  overrides?: Partial<Record<string, Partial<CameraActivityState>>>,
+  overrides?: Partial<Record<string, CameraActivityOverride>>,
 ): string {
   const activity: Record<string, CameraActivityState> = {};
   for (const name of cameras) {
