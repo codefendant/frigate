@@ -1,0 +1,58 @@
+name: Validate No Re-enable Regression Control
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - validation/no-reenable
+
+permissions:
+  contents: read
+
+jobs:
+  negative_control:
+    name: Regression test fails without re-enable playback
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Remove only the added re-enable playback conditions
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path("web/src/components/player/LivePlayer.tsx")
+          text = path.read_text()
+          text = text.replace(
+              "playbackEnabled={cameraActive || liveReady || isReEnabling}",
+              "playbackEnabled={cameraActive || liveReady}",
+          )
+          text = text.replace(
+              "      cameraActive ||\n      !showStillWithoutActivity ||\n      liveReady ||\n      isReEnabling\n",
+              "      cameraActive || !showStillWithoutActivity || liveReady\n",
+          )
+          text = text.replace(
+              "            cameraActive ||\n            !showStillWithoutActivity ||\n            liveReady ||\n            isReEnabling\n",
+              "            cameraActive || !showStillWithoutActivity || liveReady\n",
+          )
+          path.write_text(text)
+          PY
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 20.x
+      - run: npm install
+        working-directory: ./web
+      - name: Install Playwright Chromium
+        run: npx playwright install chromium --with-deps
+        working-directory: ./web
+      - name: Build web for E2E
+        run: npm run e2e:build
+        working-directory: ./web
+      - name: Confirm regression test catches removed playback conditions
+        working-directory: ./web
+        run: |
+          if npx playwright test --config e2e/playwright.config.ts e2e/specs/live-reenable.spec.ts; then
+            echo "Regression test unexpectedly passed without the re-enable playback conditions."
+            exit 1
+          fi
+          echo "Regression test correctly failed when the re-enable playback conditions were removed."
